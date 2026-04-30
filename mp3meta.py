@@ -13,8 +13,7 @@ from pathlib import Path
 
 try:
     from mutagen.easyid3 import EasyID3
-    from mutagen.id3 import ID3NoHeaderError
-    from mutagen.mp3 import MP3
+    from mutagen.id3 import ID3, ID3NoHeaderError
 except ImportError:
     sys.exit("missing dependency: pip install mutagen")
 
@@ -53,14 +52,38 @@ def get(tags, key: str) -> str:
     return val[0] if isinstance(val, list) else str(val)
 
 
+def detect_format(path: Path) -> str:
+    """Best-effort sniff of the actual container, regardless of extension."""
+    with open(path, "rb") as f:
+        head = f.read(12)
+    if head.startswith(b"ID3"):
+        return "mp3"
+    if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+        return "mp3"
+    if len(head) >= 8 and head[4:8] == b"ftyp":
+        return "mp4/m4a"
+    if head.startswith(b"OggS"):
+        return "ogg"
+    if head.startswith(b"fLaC"):
+        return "flac"
+    if head.startswith(b"RIFF"):
+        return "wav"
+    return "unknown"
+
+
 def load_tags(path: Path) -> EasyID3:
     try:
         return EasyID3(path)
     except ID3NoHeaderError:
-        mp3 = MP3(path)
-        mp3.add_tags()
-        mp3.save()
-        return EasyID3(path)
+        pass
+    fmt = detect_format(path)
+    if fmt != "mp3":
+        raise RuntimeError(
+            f"not a real mp3 (looks like {fmt}); rename the file to its true "
+            f"extension or convert it before tagging"
+        )
+    ID3().save(path)
+    return EasyID3(path)
 
 
 def is_blank(path: Path) -> bool:
